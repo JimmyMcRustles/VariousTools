@@ -1,0 +1,88 @@
+#Requires -Version 2.0
+
+function Test-InternetAccess {
+  <#
+  .SYNOPSIS
+    Tests connectivity by pinging Google DNS servers once
+  .DESCRIPTION
+    Uses Test-Connection to ping a host, with -Quiet for returning a boolean. The default is a highly available Google DNS server (8.8.4.4)
+  .EXAMPLE
+    Test-InternetAccess
+  .EXAMPLE
+    Test-InternetAccess example.com
+  .INPUTS
+    None.
+  .OUTPUTS
+    Boolean
+  #>
+  param (
+    [String]
+    $RemoteHost = "google-public-dns-b.google.com"
+    )
+  Test-Connection -Computer $RemoteHost -BufferSize 16 -Count 1 -Quiet
+}
+
+
+function Go-Offline {
+  <# 
+  .SYNOPSIS
+  Disables your internet connection
+  .DESCRIPTION
+  Finds all network adapters that appear connected and disables them, taking you offline. Later on you can re-enable just those adapters, because they've been stored in an XML file. Connected adapters are detected through WMI. A NetConnectionStatus value of 2 means Connected. 7 means Media Disconnected.
+  .EXAMPLE
+    Go-Offline
+  .INPUTS
+    None.
+  .OUTPUTS
+    None.
+  .LINK
+    https://blogs.technet.microsoft.com/heyscriptingguy/2011/10/07/use-powershell-to-identify-your-real-network-adapter/
+  .LINK
+    https://msdn.microsoft.com/en-us/library/aa394216(v=vs.85).aspx
+  #>
+  [CmdletBinding(SupportsShouldProcess=$True)]
+  param()
+  $XMLLocation = "$env:TEMP\Disabled-NICs.xml"
+
+  if (Test-InternetAccess) {
+    $connectedAdapters = Get-WmiObject -Class Win32_NetworkAdapter -Filter "NetConnectionStatus = 2"
+    # Go offline
+    $connectedAdapters | Invoke-WMIMethod -Name disable 1>$null
+    # Save which adapters were connected at the time
+    $connectedAdapters | Select Name, DeviceID | Export-Clixml -Path $XMLLocation -Force
+    Write-Output "You've been taken offline!"
+    Sleep 1
+  } else {
+    Write-Output "Connection already down..."
+    Sleep 1
+  }
+}
+
+function Go-Online {
+  <# 
+  .SYNOPSIS
+  Re-enables your internet connection
+  .DESCRIPTION
+  Finds all network adapters that were previously disabled by Go-Offline and enables them. This information is persisted in a temp file.
+  .EXAMPLE
+    Go-Online
+  .INPUTS
+    None.
+  .OUTPUTS
+    None.
+  .LINK
+    https://blogs.technet.microsoft.com/heyscriptingguy/2011/10/07/use-powershell-to-identify-your-real-network-adapter/
+  #>
+  [CmdletBinding(SupportsShouldProcess=$True)]
+  param()
+  $XMLLocation = "$env:TEMP\Disabled-NICs.xml"
+
+  if (!(Test-InternetAccess)) {
+    # Get the NICs that have been previously disabled
+    $connectedAdapters = Import-Clixml "$env:TEMP\Disabled-NICs.xml" | Select -ExpandProperty DeviceID | ForEach {Get-WMIObject -Class Win32_NetworkAdapter -Filter "DeviceID = $_"}
+    # Get back online
+    $connectedAdapters | Invoke-WMIMethod -Name enable | Out-Null
+    Write-Output "Internet access restored!" # Triggers early, before actual re-connection
+    Sleep 1
+  }
+}
